@@ -130,10 +130,12 @@ def track_hornets(bbox, model, vidcap, video_source):
     return df, bbox  
 
 def select_model_path():
-    model_path = filedialog.askopenfilename(initialfile="", title="Select Model", filetypes=[("Model files", "*.pt")])
+    script_directory = os.path.dirname(os.path.realpath(__file__))
+    model_path = filedialog.askopenfilename(initialdir=script_directory, title="Select Model", filetypes=[("Model files", "*.pt")])
     return model_path
 
 def select_video_source():
+    script_directory = os.path.dirname(os.path.realpath(__file__))
     root = tk.Tk()
     root.withdraw()
 
@@ -144,14 +146,16 @@ def select_video_source():
     elif source_choice.lower() == "webcam":
         video_source = 0 
     elif source_choice.lower() == "video":
-        video_source = filedialog.askopenfilename(title="Select Video", filetypes=[("Video files", "*.mov;*.mp4")])
+        video_source = filedialog.askopenfilename(initialdir=script_directory, title="Select Video", filetypes=[("Video files", "*.mov;*.mp4")])
     else:
         tk.messagebox.showerror("Error", "Invalid source choice")
         return None
 
     return video_source
 
-def plot_combined(df, video_filename, bbox):
+    return video_source
+
+def plot_combined(df, video_name, bbox, output_folder):
     # Convert 'CROSSING_TIMESTAMP' to datetime
     entry_data = df[df['CROSSING_TYPE'] == 'ENTRY']
     exit_data = df[df['CROSSING_TYPE'] == 'EXIT']
@@ -170,11 +174,11 @@ def plot_combined(df, video_filename, bbox):
 
     # Plot crossing frequency and rolling average
     plt.subplot(2, 2, 2)
-    df_copy = df.copy()  # Create a copy of the DataFrame
+    df_copy = df.copy()  
     df_copy['CROSSING_TIMESTAMP'] = pd.to_datetime(df_copy['CROSSING_TIMESTAMP'], unit='s')
     df_copy.set_index('CROSSING_TIMESTAMP', inplace=True)
 
-    entry_data_copy = entry_data.copy()  # Create a copy of the DataFrame
+    entry_data_copy = entry_data.copy()  
     entry_data_copy['CROSSING_TIMESTAMP'] = pd.to_datetime(entry_data_copy['CROSSING_TIMESTAMP'], unit='s')
     entry_data_copy.set_index('CROSSING_TIMESTAMP', inplace=True)
         
@@ -182,7 +186,7 @@ def plot_combined(df, video_filename, bbox):
     rolling_avg_entry = crossing_frequency_entry.rolling(window=1).mean()
     plt.plot(rolling_avg_entry.index, rolling_avg_entry, linestyle='--', color='red', label='Entry')
     
-    exit_data_copy = exit_data.copy()  # Create a copy of the DataFrame
+    exit_data_copy = exit_data.copy()  
     exit_data_copy['CROSSING_TIMESTAMP'] = pd.to_datetime(exit_data_copy['CROSSING_TIMESTAMP'], unit='s')
     exit_data_copy.set_index('CROSSING_TIMESTAMP', inplace=True)
 
@@ -198,9 +202,14 @@ def plot_combined(df, video_filename, bbox):
     plt.ylabel('Crossings per 10 seconds')
     plt.legend()
     plt.title('Crossings per 10 seconds [Rolling Average]')
+        
+    # Set custom tick locations
+    tick_interval = pd.date_range(start=0, end=df_copy.index.max(), freq='10S')
+    plt.xticks(tick_interval, (tick_interval - tick_interval.min()).total_seconds().astype(int))
+
     
     # Bar graph
-# Subplot for metadata summary
+    
     plt.subplot(2, 2, 3)
 
     # Metadata summary data
@@ -213,23 +222,21 @@ def plot_combined(df, video_filename, bbox):
     average_frequency_exit = crossing_frequency_exit.mean().round(1)
     video_length_timedelta = df_copy.index[-1] - df_copy.index[0]
     video_length_formatted = str(video_length_timedelta).split(".")[0]
+    
     # Create a table with metadata summary
     table_data = [
         ["Number of Crossings", f"Total: {total_crossings} (Entry: {entry_crossings}, Exit: {exit_crossings})"],
         ["Number of Tracked Hornets", total_tracked_hornets],
-        ["Average Frequency (/s)", f"Total: {average_frequency_total}, Entry: {average_frequency_entry}, Exit: {average_frequency_exit}"],
+        ["Average Crossing Frequency (/s)", f"Total: {(average_frequency_total/10).round(1)}, (Entry: {(average_frequency_entry/10).round(1)}, Exit: {(average_frequency_exit/10).round(1)})"],
         ["Tracking Time", video_length_formatted],
         ["Detection box coordinates (pixels)", f"Centre: {bbox[0]+(bbox[2]/2)}x{bbox[1]+(bbox[3]/2)}"],
         ["Detection box size (pixels)", f"Width: {bbox[2]}, Height: {bbox[3]}"]
     ]
-    
 
-
-    # Create a table with metadata summary
     table = plt.table(cellText=table_data, loc='center', cellLoc='center', colLabels=['Metric', 'Value'])
     table.auto_set_font_size(False)
     table.set_fontsize(10)
-    table.scale(1, 1.5)
+    table.scale(1, 2)
     plt.title('Tracker Metadata Summary')
     plt.axis('off')
     
@@ -242,28 +249,36 @@ def plot_combined(df, video_filename, bbox):
     plt.ylabel('Total')
     plt.legend()
     plt.title('Cumulative Tracked Hornets vs Registered Crossings')
-    output_folder = os.path.join(os.path.dirname(__file__), 'Outputs')
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
+    
     # Save plots separately inside 'Outputs' folder
-    plt.savefig(os.path.join(output_folder, f"{video_filename}_combined_plots.png"))
+    plt.savefig(os.path.join(output_folder, f"{video_name}_combined_plots.png"))
     plt.show()
         
-        
 def main():
+    # Select model and video source
     root = tk.Tk()
     root.withdraw()
     model_path = select_model_path()
     video_source = select_video_source()
+    if video_source:
+        video_name = os.path.basename(video_source)
+    else:
+        print("Video source selection canceled or invalid.")
 
+    # Initialize model
     model = initialize_model(model_path)
 
+    # Select bounding box
     sec = 0
     vidcap = cv2.VideoCapture(video_source)
     success, frame = get_frame(sec, vidcap)
 
     bbox = cv2.selectROI("Select bounding box and press SPACE", frame, showCrosshair=False)
+    
+    # Create 'Outputs' folder if it doesn't exist
+    output_folder = os.path.join(os.path.dirname(__file__), 'Outputs')
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
     # Call track_hornets within the selected bbox
     df, bbox = track_hornets(bbox, model, vidcap, video_source)
@@ -272,22 +287,17 @@ def main():
     vidcap.release()
     cv2.destroyAllWindows()
 
-    # Create 'Outputs' folder if it doesn't exist
-    output_folder = os.path.join(os.path.dirname(__file__), 'Outputs')
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
     # Save DataFrame and bbox CSV files inside 'Outputs' folder
-    df_filename = os.path.join(output_folder, f"{video_source}.csv")
-    bbox_filename = os.path.join(output_folder, f"{video_source}_bbox.csv")
-
+    df_filename = os.path.join(output_folder, f"{video_name}.csv")
+    bbox_filename = os.path.join(output_folder, f"{video_name}_bbox.csv")
     df.to_csv(df_filename, index=False)
     pd.DataFrame(bbox).to_csv(bbox_filename, index=False)
 
-    # Plot cumulative time series and crossing frequency
-    plot_combined(df, video_source, bbox)
+    # Plot, display, and save graphs to 'Outputs' folder
+    plot_combined(df, video_name, bbox, output_folder)
     
     print("CSVs and plots saved")
 
 if __name__ == "__main__":
     main()
+    
